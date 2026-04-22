@@ -1,5 +1,0 @@
-mediapipe>=0.10.9
-opencv-python>=4.9
-PyQt6>=6.6
-pynput>=1.7
-numpy>=1.26
