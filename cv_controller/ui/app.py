@@ -38,6 +38,11 @@ GESTURE_PATH = _RES / "gesture_recognizer.task"
 
 _MOUSE_CALIBRATION_WINDOW = 90
 _MOUSE_CALIBRATION_PADDING = 0.02
+_MOUSE_EDGE_REACH_BOOST = 1.15
+_MOUSE_PAN_GAIN = 1.4
+_MOUSE_PAN_DEADZONE = 0.003
+_MOUSE_TOGGLE_SCORE_THRESHOLD = 0.65
+_MOUSE_TOGGLE_HOLD_SECONDS = 0.15
 
 
 class MainWindow(QMainWindow):
@@ -71,9 +76,11 @@ class MainWindow(QMainWindow):
         self._current_profile_path: Path | None = None
         self._selected_camera_index = 0
         self._mouse_paused = False
-        self._last_thumbs_up = False
+        self._thumbs_up_started_at: float | None = None
+        self._thumbs_up_triggered = False
         self._last_mouse_toggle = 0.0
         self._mouse_ranges: dict[str, dict[str, float]] = {}
+        self._last_mouse_input_pos: dict[str, tuple[float, float]] = {}
 
         self._serial_thread: SerialThread | None = None
         self._prev_serial: dict = {k: 0 for k in ["b1", "b2", "j1", "j2", "j3", "j4"]}
@@ -163,7 +170,7 @@ class MainWindow(QMainWindow):
 
         self._arduino_btn = QPushButton("🎮 Arduino")
         self._arduino_btn.setCheckable(True)
-        self._arduino_btn.setChecked(True)
+        self._arduino_btn.setChecked(False)
         self._arduino_btn.setToolTip("Show / hide the Arduino physical controller panel")
         self._arduino_btn.toggled.connect(self._toggle_arduino_panel)
         toolbar.addWidget(self._arduino_btn)
@@ -230,6 +237,7 @@ class MainWindow(QMainWindow):
 
         self._splitter.setSizes([580, 220, 220, 200])
         self._splitter.setHandleWidth(1)
+        self._toggle_arduino_panel(False)
         self._refresh_camera_list()
 
     def _setup_tray(self):
@@ -288,7 +296,8 @@ class MainWindow(QMainWindow):
         self._tracker.tracking_error.connect(self._on_tracking_error)
         self._tracker.start()
         self._mouse_paused = False
-        self._last_thumbs_up = False
+        self._thumbs_up_started_at = None
+        self._thumbs_up_triggered = False
         self._reset_mouse_calibration()
         self._apply_mouse_settings()
         self.mouse_panel.set_mouse_enabled(True)
@@ -305,9 +314,10 @@ class MainWindow(QMainWindow):
             self._tracker.stop()
             self._tracker = None
         self._mouse_paused = False
-        self._last_thumbs_up = False
+        self._thumbs_up_started_at = None
+        self._thumbs_up_triggered = False
         self._reset_mouse_calibration()
-        self.camera_widget.set_mouse_target(None)
+        self.camera_widget.set_mouse_target(None, clear_trail=True)
         self.mouse_panel.set_active(False)
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -366,7 +376,7 @@ class MainWindow(QMainWindow):
         self._reset_mouse_calibration()
         self._apply_mouse_settings()
         if source == "none":
-            self.camera_widget.set_mouse_target(None)
+            self.camera_widget.set_mouse_target(None, clear_trail=True)
         self.mouse_panel.set_mouse_enabled(
             bool(self._tracker and self._tracker.isRunning() and not self._mouse_paused and source != "none")
         )
@@ -419,6 +429,8 @@ class MainWindow(QMainWindow):
         source = self.mouse_panel.get_source()
         if source == "none" or self._mouse_paused:
             self._emitter.set_mouse_control(None)
+        elif source in ("hand", "index_tip"):
+            self._emitter.set_mouse_control(None)
         else:
             self._emitter.set_mouse_control(source)
 
@@ -428,6 +440,7 @@ class MainWindow(QMainWindow):
     def _update_mouse_from_face_data(self, data: dict):
         source = self.mouse_panel.get_source()
         if source == "none" or self._mouse_paused:
+            self._clear_mouse_anchor(source)
             self.camera_widget.set_mouse_target(None)
             return
         sensitivity = self.mouse_panel.get_sensitivity()
@@ -448,29 +461,46 @@ class MainWindow(QMainWindow):
                 pos = (it.get("x", 0.5), it.get("y", 0.5))
 
         if pos:
-            x, y = self._expand_mouse_range(source, pos, sensitivity)
-            self._emitter.update_mouse_position(x, y)
-            self.camera_widget.set_mouse_target((x, y), f"Cursor - {MOUSE_SOURCES.get(source, source)}")
+            if source in ("hand", "index_tip"):
+                preview = self._pan_mouse_from_delta(source, pos, sensitivity)
+                if preview:
+                    self.camera_widget.set_mouse_target(preview, f"Cursor - {MOUSE_SOURCES.get(source, source)}")
+                else:
+                    self.camera_widget.set_mouse_target(None)
+            else:
+                x, y = self._expand_mouse_range(source, pos, sensitivity)
+                self._emitter.update_mouse_position(x, y)
+                self.camera_widget.set_mouse_target((x, y), f"Cursor - {MOUSE_SOURCES.get(source, source)}")
         else:
+            self._clear_mouse_anchor(source)
             self.camera_widget.set_mouse_target(None)
 
     def _handle_mouse_toggle_gesture(self, data: dict):
         gestures = data.get("gestures", {})
-        thumbs_up = gestures.get("Thumb_Up", 0.0) >= 0.55
+        thumbs_up = gestures.get("Thumb_Up", 0.0) >= _MOUSE_TOGGLE_SCORE_THRESHOLD
         now = time.time()
+        if thumbs_up:
+            if self._thumbs_up_started_at is None:
+                self._thumbs_up_started_at = now
+        else:
+            self._thumbs_up_started_at = None
+            self._thumbs_up_triggered = False
+
         if (
             thumbs_up
-            and not self._last_thumbs_up
+            and not self._thumbs_up_triggered
             and self.mouse_panel.get_source() != "none"
+            and self._thumbs_up_started_at is not None
+            and now - self._thumbs_up_started_at >= _MOUSE_TOGGLE_HOLD_SECONDS
             and now - self._last_mouse_toggle >= 1.0
         ):
             self._mouse_paused = not self._mouse_paused
             self._last_mouse_toggle = now
+            self._thumbs_up_triggered = True
             self._apply_mouse_settings()
             self.mouse_panel.set_mouse_enabled(not self._mouse_paused)
             if self._mouse_paused:
-                self.camera_widget.set_mouse_target(None)
-        self._last_thumbs_up = thumbs_up
+                self.camera_widget.set_mouse_target(None, clear_trail=True)
 
     def _expand_mouse_range(self, source: str, pos: tuple[float, float], sensitivity: float) -> tuple[float, float]:
         x = self._normalize_mouse_axis(source, "x", pos[0], sensitivity)
@@ -495,16 +525,35 @@ class MainWindow(QMainWindow):
         observed_max = ranges[max_key]
         span = max(0.04, observed_max - observed_min)
 
-        padding = max(_MOUSE_CALIBRATION_PADDING, span * 0.1)
-        padded_min = max(0.0, observed_min - padding)
-        padded_max = min(1.0, observed_max + padding)
-        padded_span = max(0.03, padded_max - padded_min)
-
-        normalized = (value - padded_min) / padded_span
-        return 0.5 + (normalized - 0.5) * max(1.0, sensitivity)
+        # Map the observed range directly to the screen so the furthest seen
+        # left/right/up/down positions can actually reach the edges.
+        normalized = (value - observed_min) / span
+        return 0.5 + (normalized - 0.5) * max(_MOUSE_EDGE_REACH_BOOST, sensitivity)
 
     def _reset_mouse_calibration(self):
         self._mouse_ranges.clear()
+        self._last_mouse_input_pos.clear()
+
+    def _clear_mouse_anchor(self, source: str):
+        if source in self._last_mouse_input_pos:
+            self._last_mouse_input_pos.pop(source, None)
+
+    def _pan_mouse_from_delta(self, source: str, pos: tuple[float, float], sensitivity: float) -> tuple[float, float] | None:
+        previous = self._last_mouse_input_pos.get(source)
+        self._last_mouse_input_pos[source] = pos
+        if previous is None:
+            return None
+
+        dx = (pos[0] - previous[0]) * max(_MOUSE_PAN_GAIN, sensitivity)
+        dy = (pos[1] - previous[1]) * max(_MOUSE_PAN_GAIN, sensitivity)
+        if abs(dx) < _MOUSE_PAN_DEADZONE:
+            dx = 0.0
+        if abs(dy) < _MOUSE_PAN_DEADZONE:
+            dy = 0.0
+        if dx == 0.0 and dy == 0.0:
+            return pos
+        self._emitter.move_mouse_relative(dx, dy)
+        return pos
 
     def _connect_arduino(self, port: str, baud: int):
         if self._serial_thread and self._serial_thread.isRunning():

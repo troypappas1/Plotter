@@ -1,8 +1,11 @@
 import numpy as np
 import cv2
+from collections import deque
 from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen
 from PyQt6.QtWidgets import QLabel
+
+_TRAIL_MAX = 30
 
 
 class CameraWidget(QLabel):
@@ -21,6 +24,7 @@ class CameraWidget(QLabel):
         self._show_landmarks = True
         self._mouse_target: tuple[float, float] | None = None
         self._mouse_source_label = ""
+        self._trail: deque[tuple[float, float]] = deque(maxlen=_TRAIL_MAX)
 
     def set_show_landmarks(self, show: bool):
         self._show_landmarks = show
@@ -42,6 +46,8 @@ class CameraWidget(QLabel):
 
         if self._show_landmarks and self._landmarks and self._face_detected:
             pixmap = self._draw_landmarks(pixmap, frame.shape, w, h)
+        if len(self._trail) > 1:
+            pixmap = self._draw_trail(pixmap)
         if self._mouse_target is not None:
             pixmap = self._draw_mouse_target(pixmap, w, h)
 
@@ -54,9 +60,13 @@ class CameraWidget(QLabel):
         self._face_detected = data.get("face_detected", False)
         self._landmarks = data.get("landmarks", [])
 
-    def set_mouse_target(self, pos: tuple[float, float] | None, source_label: str = ""):
+    def set_mouse_target(self, pos: tuple[float, float] | None, source_label: str = "", clear_trail: bool = False):
         self._mouse_target = pos
         self._mouse_source_label = source_label
+        if pos is not None:
+            self._trail.append(pos)
+        elif clear_trail:
+            self._trail.clear()
 
     def _draw_landmarks(self, pixmap: QPixmap, orig_shape, orig_w: int, orig_h: int) -> QPixmap:
         pw = pixmap.width()
@@ -79,6 +89,29 @@ class CameraWidget(QLabel):
             px = int(x * sx)
             py = int(y * sy)
             painter.drawEllipse(px - 1, py - 1, 3, 3)
+
+        painter.end()
+        return pixmap
+
+    def _draw_trail(self, pixmap: QPixmap) -> QPixmap:
+        points = list(self._trail)
+        n = len(points)
+        pw, ph = pixmap.width(), pixmap.height()
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        for i, (fx, fy) in enumerate(points):
+            t = i / (n - 1)  # 0.0 = oldest, 1.0 = newest
+            alpha = int(30 + t * 180)
+            radius = 1 + t * 4
+            color = QColor(255, 196, 64, alpha)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            cx = int(fx * pw)
+            cy = int(fy * ph)
+            r = int(radius)
+            painter.drawEllipse(cx - r, cy - r, r * 2, r * 2)
 
         painter.end()
         return pixmap
