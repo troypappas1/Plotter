@@ -464,6 +464,32 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   display: grid; grid-template-columns: 1fr 1fr; gap: .3rem;
 }
 
+/* === PRINTER PANEL TABS === */
+.pp-tabs {
+  display: flex; gap: .25rem; padding: .3rem;
+  background: rgba(255,255,255,.04); border-radius: 9px;
+  margin-bottom: .1rem;
+}
+.pp-tab {
+  flex: 1; padding: .32rem .4rem; border-radius: 6px;
+  font-size: .74rem; font-weight: 600; cursor: pointer;
+  border: none; background: none; color: var(--muted);
+  transition: background .15s, color .15s;
+}
+.pp-tab:hover { color: #fff; background: rgba(255,255,255,.08); }
+.pp-tab.active { background: rgba(45,122,224,.25); color: var(--blue-l); }
+.pp-tabpane { display: none; flex-direction: column; gap: .55rem; }
+.pp-tabpane.active { display: flex; }
+.pp-2col {
+  display: grid; grid-template-columns: 1fr 1fr; gap: .45rem;
+}
+.pp-group-title {
+  font-size: .67rem; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--dim);
+  border-bottom: 1px solid var(--border); padding-bottom: .2rem;
+  margin-bottom: .1rem;
+}
+
 /* Z-axis live slider */
 .z-slider-wrap {
   display: flex; flex-direction: row; align-items: center; gap: .4rem;
@@ -896,143 +922,162 @@ footer { border-top: 1px solid var(--border); padding: 2.75rem 0 1.25rem; }
         <!-- ── PRINTER PANEL (shown when connected) ── -->
         <div id="printerPanel" class="printer-panel" style="display:none">
 
-          <!-- Pen Heights -->
-          <div class="pp-section">
-            <div class="pp-title">Z Axis
+          <!-- Tab bar -->
+          <div class="pp-tabs">
+            <button class="pp-tab active" data-tab="pen">Pen</button>
+            <button class="pp-tab" data-tab="draw">Draw</button>
+            <button class="pp-tab" data-tab="motion">Motion</button>
+            <button class="pp-tab" data-tab="jog">Jog</button>
+          </div>
+
+          <!-- ── PEN tab ── -->
+          <div class="pp-tabpane active" id="pp-tab-pen">
+            <div class="pp-row" style="justify-content:space-between;align-items:center">
               <span class="pp-live" id="liveZLabel">Live Z —</span>
-            </div>
-            <!-- Live Z slider + step buttons -->
-            <div class="z-slider-wrap">
-              <button class="pp-btn pp-btn-sm z-step-btn" id="zStepUp" title="+0.5mm">+</button>
-              <div class="z-slider-inner">
-                <span class="z-tick z-tick-top">50</span>
-                <input type="range" id="zLiveSlider" class="z-slider" min="-50" max="50" step="0.5" value="8">
-                <span class="z-tick z-tick-bot">-50</span>
+              <div style="display:flex;gap:.3rem;align-items:center">
+                <input type="number" id="zGoInput" class="pp-num" style="width:60px" min="-50" max="50" step="0.5" placeholder="mm">
+                <button class="pp-btn pp-btn-sm pp-btn-accent" id="zGoBtn">Go</button>
+                <button class="pp-btn pp-btn-sm" id="liftBtn">↑ Up</button>
+                <button class="pp-btn pp-btn-sm pp-btn-accent" id="dropBtn">↓ Down</button>
               </div>
-              <button class="pp-btn pp-btn-sm z-step-btn" id="zStepDown" title="-0.5mm">−</button>
             </div>
-            <!-- Preset rows -->
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Pen Up</label>
-              <input type="number" id="penUpZ" class="pp-num" value="8" min="-50" max="50" step="0.5">
-              <button class="pp-btn pp-btn-sm" id="liftBtn">Set ↑</button>
+            <!-- Z slider -->
+            <div class="z-slider-wrap">
+              <button class="pp-btn pp-btn-sm z-step-btn" id="zStepUp">+</button>
+              <div class="z-slider-inner">
+                <span class="z-tick">50</span>
+                <input type="range" id="zLiveSlider" class="z-slider" min="-50" max="50" step="0.5" value="-45">
+                <span class="z-tick">-50</span>
+              </div>
+              <button class="pp-btn pp-btn-sm z-step-btn" id="zStepDown">−</button>
             </div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Pen Down</label>
-              <input type="number" id="penDownZ" class="pp-num" value="2" min="-50" max="50" step="0.5">
-              <button class="pp-btn pp-btn-sm pp-btn-accent" id="dropBtn">Set ↓</button>
+            <div class="pp-2col">
+              <div class="pp-field">
+                <label class="pp-label">Pen Up (mm)</label>
+                <input type="number" id="penUpZ" class="pp-num" value="-45" min="-50" max="50" step="0.5">
+              </div>
+              <div class="pp-field">
+                <label class="pp-label">Pen Down (mm)</label>
+                <input type="number" id="penDownZ" class="pp-num" value="-47" min="-50" max="50" step="0.5">
+              </div>
             </div>
           </div>
 
-          <!-- SVG Import -->
-          <div class="pp-section">
-            <div class="pp-title">SVG Import</div>
+          <!-- ── DRAW tab ── -->
+          <div class="pp-tabpane" id="pp-tab-draw">
+
+            <!-- SVG -->
+            <div class="pp-group-title">SVG</div>
             <label class="pp-file-label">
               <input type="file" id="svgFile" accept=".svg" style="display:none">
-              <span class="pp-file-btn">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                SVG File
-              </span>
-              <span class="pp-file-name" id="svgFileName">No file chosen</span>
+              <span class="pp-file-btn">📂 Choose SVG</span>
+              <span class="pp-file-name" id="svgFileName">No file</span>
             </label>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">SVG Scale</label>
-              <input type="number" id="svgScale" class="pp-num" value="100" min="1" max="500" step="1">
-              <span class="pp-unit">%</span>
+            <div class="pp-2col" style="align-items:center">
+              <div class="pp-field">
+                <label class="pp-label">Scale %</label>
+                <input type="number" id="svgScale" class="pp-num" value="100" min="1" max="500" step="1">
+              </div>
+              <div style="display:flex;gap:.3rem;padding-top:.9rem">
+                <button class="pp-btn pp-btn-accent" id="plotSvgBtn" disabled>Plot</button>
+                <button class="pp-btn" id="clearSvgBtn">Clear</button>
+              </div>
             </div>
-            <div class="pp-row">
-              <button class="pp-btn pp-btn-accent" id="plotSvgBtn" disabled>Plot SVG</button>
-              <button class="pp-btn" id="clearSvgBtn">Clear SVG</button>
-            </div>
-            <div class="pp-hint" id="svgHint">No SVG loaded. SVGs auto-fit to the active boundary box.</div>
-          </div>
+            <div class="pp-hint" id="svgHint">No SVG loaded.</div>
 
-          <!-- Text to Plot -->
-          <div class="pp-section">
-            <div class="pp-title">Text to Plot
-              <button class="pp-btn pp-btn-sm" id="dictateBtn" title="Dictate — say 'print' to plot">🎤</button>
+            <!-- Text -->
+            <div class="pp-group-title" style="margin-top:.6rem">Text
+              <button class="pp-btn pp-btn-sm" id="dictateBtn" style="margin-left:auto">🎤</button>
             </div>
-            <textarea id="plotText" class="pp-textarea" placeholder="Type text here…" rows="2"></textarea>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Size</label>
-              <input type="number" id="textSize" class="pp-num" value="15" min="3" max="80" step="1">
-              <span class="pp-unit">mm</span>
+            <textarea id="plotText" class="pp-textarea" placeholder="Type or dictate text…" rows="2"></textarea>
+            <div class="pp-2col" style="align-items:flex-end">
+              <div class="pp-field">
+                <label class="pp-label">Size (mm)</label>
+                <input type="number" id="textSize" class="pp-num" value="15" min="3" max="80" step="1">
+              </div>
+              <div class="pp-field">
+                <label class="pp-label">Align</label>
+                <div style="display:flex;gap:.25rem">
+                  <button class="pp-btn pp-btn-sm" id="textAlignLeft">L</button>
+                  <button class="pp-btn pp-btn-sm pp-btn-accent" id="textAlignCenter">C</button>
+                  <button class="pp-btn pp-btn-sm" id="textAlignRight">R</button>
+                </div>
+              </div>
             </div>
-            <div class="pp-row">
-              <button class="pp-btn" id="textAlignLeft" title="Left align">⬛◻◻</button>
-              <button class="pp-btn pp-btn-accent" id="textAlignCenter" title="Center">◻⬛◻</button>
-              <button class="pp-btn" id="textAlignRight" title="Right align">◻◻⬛</button>
-            </div>
-            <div class="pp-row">
+            <div style="display:flex;gap:.3rem;margin-top:.3rem">
               <button class="pp-btn" id="previewTextBtn">Preview</button>
               <button class="pp-btn pp-btn-accent" id="plotTextBtn" disabled>Plot Text</button>
-              <button class="pp-btn" id="clearTextBtn">Clear</button>
+              <button class="pp-btn" id="clearTextBtn">✕</button>
             </div>
             <div class="pp-hint" id="textHint">Connect printer to plot text.</div>
           </div>
 
-          <!-- Motion -->
-          <div class="pp-section">
-            <div class="pp-title">Motion</div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Line Passes</label>
-              <input type="number" id="linePasses" class="pp-num" value="2" min="1" max="8" step="1">
-              <span class="pp-unit">× thick</span>
+          <!-- ── MOTION tab ── -->
+          <div class="pp-tabpane" id="pp-tab-motion">
+            <div class="pp-2col">
+              <div class="pp-field">
+                <label class="pp-label">XY Speed</label>
+                <input type="number" id="xySpeed" class="pp-num" value="12000" min="100" max="20000" step="100">
+                <span class="pp-unit">mm/min</span>
+              </div>
+              <div class="pp-field">
+                <label class="pp-label">Line Passes</label>
+                <input type="number" id="linePasses" class="pp-num" value="2" min="1" max="8" step="1">
+                <span class="pp-unit">× thick</span>
+              </div>
             </div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">XY Speed</label>
-              <input type="number" id="xySpeed" class="pp-num" value="12000" min="100" max="20000" step="100">
-              <span class="pp-unit">mm/min</span>
+            <div class="pp-2col">
+              <div class="pp-field">
+                <label class="pp-label">Max Speed</label>
+                <input type="number" id="maxSpeed" class="pp-num" value="220" min="10" max="500" step="10">
+                <span class="pp-unit">mm/s</span>
+              </div>
+              <div class="pp-field">
+                <label class="pp-label">Accel</label>
+                <input type="number" id="accelVal" class="pp-num" value="6000" min="100" max="20000" step="100">
+                <span class="pp-unit">mm/s²</span>
+              </div>
             </div>
-            <div class="pp-row">
-              <button class="pp-btn pp-btn-turbo" id="turboBtn">Turbo</button>
+            <div class="pp-2col">
+              <div class="pp-field">
+                <label class="pp-label">Travel Accel</label>
+                <input type="number" id="travelAccel" class="pp-num" value="8000" min="100" max="20000" step="100">
+                <span class="pp-unit">mm/s²</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:.3rem;margin-top:.2rem">
+              <button class="pp-btn pp-btn-turbo" id="turboBtn">⚡ Turbo</button>
               <button class="pp-btn pp-btn-accent" id="applyMotionBtn">Apply</button>
-            </div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Max Speed</label>
-              <input type="number" id="maxSpeed" class="pp-num" value="220" min="10" max="500" step="10">
-              <span class="pp-unit">mm/s</span>
-            </div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Accel</label>
-              <input type="number" id="accelVal" class="pp-num" value="6000" min="100" max="20000" step="100">
-              <span class="pp-unit">mm/s²</span>
-            </div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Travel Accel</label>
-              <input type="number" id="travelAccel" class="pp-num" value="8000" min="100" max="20000" step="100">
-              <span class="pp-unit">mm/s²</span>
             </div>
           </div>
 
-          <!-- Boundaries / Jog -->
-          <div class="pp-section">
-            <div class="pp-title">Boundaries</div>
-            <div class="pp-row pp-scale-row">
-              <label class="pp-label">Jog Step</label>
-              <input type="number" id="jogStep" class="pp-num" value="5" min="0.1" max="50" step="0.1">
-              <span class="pp-unit">mm</span>
+          <!-- ── JOG tab ── -->
+          <div class="pp-tabpane" id="pp-tab-jog">
+            <div class="pp-2col" style="align-items:center">
+              <div class="pp-field">
+                <label class="pp-label">Step (mm)</label>
+                <input type="number" id="jogStep" class="pp-num" value="5" min="0.1" max="50" step="0.1">
+              </div>
+              <button class="pp-btn pp-btn-accent" id="jogCenter" style="margin-top:.9rem">⊕ Center</button>
             </div>
-            <!-- Jog grid -->
             <div class="jog-grid">
               <div></div>
-              <button class="jog-btn" id="jogUp" title="Up (↑)">▲</button>
+              <button class="jog-btn" id="jogUp">▲</button>
               <div></div>
-              <button class="jog-btn" id="jogLeft" title="Left (←)">◀</button>
-              <button class="jog-btn jog-center" id="jogCenter" title="Center">⊕</button>
-              <button class="jog-btn" id="jogRight" title="Right (→)">▶</button>
+              <button class="jog-btn" id="jogLeft">◀</button>
               <div></div>
-              <button class="jog-btn" id="jogDown" title="Down (↓)">▼</button>
+              <button class="jog-btn" id="jogRight">▶</button>
+              <div></div>
+              <button class="jog-btn" id="jogDown">▼</button>
               <div></div>
             </div>
-            <!-- Boundary corners -->
             <div class="bound-grid">
-              <button class="pp-btn pp-btn-sm" id="setBL">Set BL</button>
-              <button class="pp-btn pp-btn-sm" id="setBR">Set BR</button>
               <button class="pp-btn pp-btn-sm" id="setTL">Set TL</button>
               <button class="pp-btn pp-btn-sm" id="setTR">Set TR</button>
+              <button class="pp-btn pp-btn-sm" id="setBL">Set BL</button>
+              <button class="pp-btn pp-btn-sm" id="setBR">Set BR</button>
             </div>
-            <div class="pp-hint" id="boundsHint">Bounds: X 0–220, Y 0–220. Use arrow keys too.</div>
+            <div class="pp-hint" id="boundsHint">Bounds: X 0–220, Y 0–220. Arrow keys work too.</div>
           </div>
 
         </div>
@@ -1972,8 +2017,8 @@ function brightPt() {
 }
 
 // ── Printer panel state ──
-let penUpZ    = 8;
-let penDownZ  = 2;
+let penUpZ    = -45;
+let penDownZ  = -47;
 let currentZ  = null;
 let turboMode = false;
 let boundBL   = { x: 0,   y: 0   };
@@ -2028,6 +2073,22 @@ function zStep(delta) {
 }
 document.getElementById("zStepUp").addEventListener("click",   () => zStep(0.5));
 document.getElementById("zStepDown").addEventListener("click", () => zStep(-0.5));
+
+// Direct Z height input
+function zGoTo(val) {
+  const z = Math.max(-50, Math.min(50, parseFloat(val)));
+  if (isNaN(z)) return;
+  zLiveSlider.value = z;
+  currentZ = z;
+  liveZLabel.textContent = `Live Z ${z.toFixed(1)} mm`;
+  movePenZ(z);
+}
+document.getElementById("zGoBtn").addEventListener("click", () => {
+  zGoTo(document.getElementById("zGoInput").value);
+});
+document.getElementById("zGoInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") zGoTo(e.target.value);
+});
 // Also allow holding the button for continuous movement
 function holdStep(btnId, delta) {
   let timer;
@@ -2327,6 +2388,16 @@ document.getElementById("jogDown").addEventListener("click",   () => jogBy(0,   
 document.getElementById("jogLeft").addEventListener("click",   () => jogBy(-parseFloat(jogStepEl.value), 0));
 document.getElementById("jogRight").addEventListener("click",  () => jogBy( parseFloat(jogStepEl.value), 0));
 document.getElementById("jogCenter").addEventListener("click", () => jogCenter());
+
+// ── Printer panel tab switching ──
+document.querySelectorAll(".pp-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".pp-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".pp-tabpane").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("pp-tab-" + tab.dataset.tab).classList.add("active");
+  });
+});
 
 document.getElementById("setBL").addEventListener("click", () => {
   boundBL = { x: +jogPos.x.toFixed(2), y: +jogPos.y.toFixed(2) };
@@ -2668,47 +2739,43 @@ async function plotTextToprinter(text, sizeMM) {
   if (!serialWriter) return;
   const spd = parseFloat(xySpeedEl.value) || 4500;
 
-  // Size in bed mm
   const scale = sizeMM / CHAR_H;
   const { strokes, totalWidth: totalMM } = buildTextStrokes(text, scale);
 
-  // Compute origin on bed matching current alignment + boundary
   const bedW = boundTR.x - boundBL.x;
   const bedH = boundTR.y - boundBL.y;
   let originX;
   if      (textAlign === "left")   originX = boundBL.x;
   else if (textAlign === "right")  originX = boundTR.x - totalMM;
   else                             originX = boundBL.x + (bedW - totalMM) / 2;
-  const originY = boundBL.y + (bedH - sizeMM) / 2; // centre vertically in boundary
+  const originY = boundBL.y + (bedH - sizeMM) / 2;
 
-  await movePenZ(penUpZ); // ensure pen is up before we start
+  // Lift before starting
+  await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+  await sendGcode(`M400\n`);
 
   for (const { offX, scale: sc, pts } of strokes) {
-    // Always lift before travelling to stroke start
-    await movePenZ(penUpZ);
-    const [sx0, sy0] = pts[0];
-    const { gx: startX, gy: startY } = canvasToBed(
-      ...(() => {
-        const { cx, cy } = fontPtToCanvas(sx0, sy0, originX + offX, originY, sc);
-        // convert canvas px back — we used bed coords directly, skip canvas mapping
-        return [0, 0]; // placeholder — use bed directly below
-      })()
-    );
-    // Use bed coords directly (no canvas roundtrip)
+    // Lift, travel to stroke start, then drop — M400 ensures Z finishes before XY moves
+    await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+    await sendGcode(`M400\n`);
+
     const bedX0 = Math.max(0, Math.min(220, originX + offX + pts[0][0] * sc));
     const bedY0 = Math.max(0, Math.min(220, originY + (CHAR_H - pts[0][1]) * sc));
     await sendGcode(`G1 X${bedX0.toFixed(2)} Y${bedY0.toFixed(2)} F${TRAVEL_FEED}\n`);
-    await movePenZ(penDownZ); // drop pen — now drawing
+
+    await sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
+    await sendGcode(`M400\n`);
 
     for (let i = 1; i < pts.length; i++) {
       const bx = Math.max(0, Math.min(220, originX + offX + pts[i][0] * sc));
       const by = Math.max(0, Math.min(220, originY + (CHAR_H - pts[i][1]) * sc));
       await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
-      await new Promise(r => setTimeout(r, 4));
     }
   }
 
-  await movePenZ(penUpZ); // lift when done
+  // Final lift
+  await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+  await sendGcode(`M400\n`);
 }
 
 // ── Text panel wiring ──
