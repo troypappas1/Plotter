@@ -2555,8 +2555,6 @@ function maybeSendToprinter(canvasX, canvasY) {
     return;
   }
 
-  const passes = parseInt(document.getElementById("linePasses")?.value || "1", 10);
-
   if (prevGx === null) {
     // New stroke — lift just 2mm, travel, drop back down, no M400 to avoid stutter
     sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
