@@ -2795,9 +2795,9 @@ async function plotTextToprinter(text, sizeMM) {
 
   const clamp = (v) => Math.max(BED_MIN_MM, Math.min(BED_MAX_MM, v));
 
+  // Lift and wait for it to physically complete before sending any moves
   await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
-  // Let initial lift reach the printer before we flood it
-  await new Promise(r => setTimeout(r, 120));
+  await new Promise(r => setTimeout(r, 200));
 
   let charOffX = 0;
   for (const ch of text.toUpperCase()) {
@@ -2807,22 +2807,25 @@ async function plotTextToprinter(text, sizeMM) {
 
       const [sx0, sy0] = stroke[0];
       const bx0 = clamp(originX + charOffX + sx0 * scale);
-      const by0 = clamp(originY + sy0 * scale);
+      // Y axis: font y=0 is bottom of letter, y=8 is top.
+      // On the bed Y grows away from you, so we flip: high font Y → high bed Y
+      const by0 = clamp(originY + (CHAR_H - sy0) * scale);
 
-      // Send stroke as one batch: lift → travel → drop → draw
+      // Lift → travel → drop, then wait for all three to fully execute
       await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
       await sendGcode(`G1 X${bx0.toFixed(2)} Y${by0.toFixed(2)} F${TRAVEL_FEED}\n`);
       await sendGcode(`G1 Z${penDownZ.toFixed(2)} F6000\n`);
+      await new Promise(r => setTimeout(r, 150));
 
       for (let i = 1; i < stroke.length; i++) {
         const [sx, sy] = stroke[i];
         const bx = clamp(originX + charOffX + sx * scale);
-        const by = clamp(originY + sy * scale);
+        const by = clamp(originY + (CHAR_H - sy) * scale);
         await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
       }
 
-      // Yield between strokes so Marlin's 128-byte buffer can drain
-      await new Promise(r => setTimeout(r, 60));
+      // Wait for stroke to finish drawing before next stroke
+      await new Promise(r => setTimeout(r, 150));
     }
     charOffX += CHAR_W * scale;
   }
