@@ -2696,22 +2696,31 @@ function canvasToBed(cx, cy) {
 }
 
 let textAlign = "center"; // "left" | "center" | "right"
+let textOffsetX = null;   // canvas px drag offset, null = use alignment default
+let textOffsetY = null;
 
 // Preview text on draw canvas
 function previewTextOnCanvas() {
   const txt  = plotTextEl.value.trim();
-  const sizePx = (parseFloat(textSizeEl.value) || 15) / 220 * W * 2.2; // mm→canvas px approx
+  const sizePx = (parseFloat(textSizeEl.value) || 15) / 220 * W * 2.2;
   if (!txt) return;
 
   dctx.fillStyle = "#0b0e1a";
   dctx.fillRect(0, 0, W, H);
 
   const { strokes, totalWidth } = buildTextStrokes(txt, sizePx);
+
   let originX;
-  if      (textAlign === "left")   originX = 20;
-  else if (textAlign === "right")  originX = W - totalWidth - 20;
-  else                             originX = (W - totalWidth) / 2;
-  const originY = (H - sizePx) / 2; // vertically centred
+  if (textOffsetX !== null) {
+    originX = textOffsetX;
+  } else if (textAlign === "left")  {
+    originX = 20;
+  } else if (textAlign === "right") {
+    originX = W - totalWidth - 20;
+  } else {
+    originX = (W - totalWidth) / 2;
+  }
+  const originY = textOffsetY !== null ? textOffsetY : (H - sizePx) / 2;
 
   dctx.strokeStyle = brushColor;
   dctx.lineWidth   = 1.5;
@@ -2725,7 +2734,40 @@ function previewTextOnCanvas() {
     });
     dctx.stroke();
   }
-  textHintEl.textContent = `Preview shown. Click "Plot Text" to print.`;
+  textHintEl.textContent = `Preview shown — drag to reposition. Click "Plot Text" to print.`;
+}
+
+// Draggable text preview on canvas
+let _textDragging = false, _textDragStartX = 0, _textDragStartY = 0;
+let _textDragOriginX = 0, _textDragOriginY = 0;
+
+function initTextDrag() {
+  const canvas = drawCanvas;
+  canvas.addEventListener("mousedown", e => {
+    if (!plotTextEl?.value.trim()) return;
+    _textDragging = true;
+    _textDragStartX = e.offsetX;
+    _textDragStartY = e.offsetY;
+    const sizePx = (parseFloat(textSizeEl.value) || 15) / 220 * W * 2.2;
+    const { totalWidth } = buildTextStrokes(plotTextEl.value.trim(), sizePx);
+    if (textOffsetX === null) {
+      if      (textAlign === "left")  _textDragOriginX = 20;
+      else if (textAlign === "right") _textDragOriginX = W - totalWidth - 20;
+      else                            _textDragOriginX = (W - totalWidth) / 2;
+      _textDragOriginY = (H - sizePx) / 2;
+    } else {
+      _textDragOriginX = textOffsetX;
+      _textDragOriginY = textOffsetY;
+    }
+  });
+  canvas.addEventListener("mousemove", e => {
+    if (!_textDragging) return;
+    textOffsetX = _textDragOriginX + (e.offsetX - _textDragStartX);
+    textOffsetY = _textDragOriginY + (e.offsetY - _textDragStartY);
+    previewTextOnCanvas();
+  });
+  canvas.addEventListener("mouseup",   () => { _textDragging = false; });
+  canvas.addEventListener("mouseleave",() => { _textDragging = false; });
 }
 
 // Plot text to printer — always lifts pen before travel, drops before drawing
@@ -2733,22 +2775,29 @@ async function plotTextToprinter(text, sizeMM) {
   if (!serialWriter) return;
   const spd = parseFloat(xySpeedEl.value) || 4500;
 
-  // scale: font units (0-8 tall, 0-6 wide) → bed mm
   const scale = sizeMM / CHAR_H;
   const totalMM = text.length * CHAR_W * scale;
-
   const bedW = boundTR.x - boundBL.x;
   const bedH = boundTR.y - boundBL.y;
-  let originX;
-  if      (textAlign === "left")   originX = boundBL.x;
-  else if (textAlign === "right")  originX = boundTR.x - totalMM;
-  else                             originX = boundBL.x + (bedW - totalMM) / 2;
-  const originY = boundBL.y + (bedH - sizeMM) / 2;
+
+  // Use drag position if set, otherwise fall back to alignment
+  let originX, originY;
+  if (textOffsetX !== null) {
+    // Map canvas px offset → bed mm
+    originX = boundBL.x + (textOffsetX / W) * bedW;
+    originY = boundBL.y + (textOffsetY / H) * bedH;
+  } else {
+    if      (textAlign === "left")  originX = boundBL.x;
+    else if (textAlign === "right") originX = boundTR.x - totalMM;
+    else                            originX = boundBL.x + (bedW - totalMM) / 2;
+    originY = boundBL.y + (bedH - sizeMM) / 2;
+  }
 
   const clamp = (v) => Math.max(BED_MIN_MM, Math.min(BED_MAX_MM, v));
 
-  // Lift before starting
   await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
+  // Let initial lift reach the printer before we flood it
+  await new Promise(r => setTimeout(r, 120));
 
   let charOffX = 0;
   for (const ch of text.toUpperCase()) {
@@ -2760,7 +2809,7 @@ async function plotTextToprinter(text, sizeMM) {
       const bx0 = clamp(originX + charOffX + sx0 * scale);
       const by0 = clamp(originY + sy0 * scale);
 
-      // Lift, travel to stroke start, drop — no M400 so queue flows freely
+      // Send stroke as one batch: lift → travel → drop → draw
       await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
       await sendGcode(`G1 X${bx0.toFixed(2)} Y${by0.toFixed(2)} F${TRAVEL_FEED}\n`);
       await sendGcode(`G1 Z${penDownZ.toFixed(2)} F6000\n`);
@@ -2771,11 +2820,13 @@ async function plotTextToprinter(text, sizeMM) {
         const by = clamp(originY + sy * scale);
         await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
       }
+
+      // Yield between strokes so Marlin's 128-byte buffer can drain
+      await new Promise(r => setTimeout(r, 60));
     }
     charOffX += CHAR_W * scale;
   }
 
-  // Final lift
   await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
 }
 
@@ -2788,20 +2839,23 @@ const textSizeEl     = document.getElementById("textSize");
 const textHintEl     = document.getElementById("textHint");
 const dictateBtn     = document.getElementById("dictateBtn");
 
-// Alignment buttons
+// Alignment buttons — clicking resets any manual drag position
 ["Left","Center","Right"].forEach(a => {
   document.getElementById(`textAlign${a}`).addEventListener("click", () => {
     textAlign = a.toLowerCase();
+    textOffsetX = null; textOffsetY = null; // clear drag override
     document.getElementById(`textAlign${a}`).classList.add("pp-btn-accent");
     ["Left","Center","Right"].filter(x=>x!==a).forEach(x =>
       document.getElementById(`textAlign${x}`).classList.remove("pp-btn-accent"));
     if (plotTextEl.value.trim()) previewTextOnCanvas();
   });
 });
-// Default center highlighted
 document.getElementById("textAlignCenter").classList.add("pp-btn-accent");
 document.getElementById("textAlignLeft").classList.remove("pp-btn-accent");
 document.getElementById("textAlignRight").classList.remove("pp-btn-accent");
+
+// Init canvas drag for text repositioning
+initTextDrag();
 
 // Live preview on type or size change
 plotTextEl.addEventListener("input", () => {
