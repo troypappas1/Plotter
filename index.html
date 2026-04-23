@@ -958,7 +958,7 @@ footer { border-top: 1px solid var(--border); padding: 2.75rem 0 1.25rem; }
               </div>
               <div class="pp-field">
                 <label class="pp-label">Pen Down (mm)</label>
-                <input type="number" id="penDownZ" class="pp-num" value="-47" min="-50" max="50" step="0.5">
+                <input type="number" id="penDownZ" class="pp-num" value="-48" min="-50" max="50" step="0.5">
               </div>
             </div>
           </div>
@@ -1469,12 +1469,13 @@ function applyBrushSize(sz) {
 }
 
 // ── Toggle pen up / down ──
+// Only affects canvas drawing state — physical Z is controlled by Lift/Drop buttons
+// to avoid the printer bouncing on every gesture flicker
 function togglePen() {
   penDown = !penDown;
   prevX = null; prevY = null;
   resetStrokeBuffer();
   showToast(penDown ? "✏️ Pen down" : "✋ Pen up", penDown ? "drawing" : "lifted");
-  if (serialWriter) movePenZ(penDown ? penDownZ : penUpZ);
 }
 
 // ── Eye Aspect Ratio for blink detection ──
@@ -2018,7 +2019,7 @@ function brightPt() {
 
 // ── Printer panel state ──
 let penUpZ    = -45;
-let penDownZ  = -47;
+let penDownZ  = -48;
 let currentZ  = null;
 let turboMode = false;
 let boundBL   = { x: 0,   y: 0   };
@@ -2121,14 +2122,6 @@ async function movePenZ(z) {
   await sendGcode(`G1 Z${parseFloat(z).toFixed(2)} F3000\n`);
 }
 
-// Override penDown toggle to also move Z
-const _origTogglePen = togglePen;
-// patch: after togglePen flips penDown, move Z accordingly
-const _basePen = togglePen;
-window._penToggleHook = () => {
-  // called after penDown is already flipped by togglePen()
-  if (serialWriter) movePenZ(penDown ? penDownZ : penUpZ);
-};
 
 // ── SVG import ──
 svgFileEl.addEventListener("change", e => {
@@ -2466,13 +2459,16 @@ printerBtn.addEventListener("click", async () => {
     await sendGcode("M84 S0\n");               // disable stepper timeout (keep motors on)
     await sendGcode("G28 X Y\n");              // home X and Y (Z not needed — pen is fixed height)
     await new Promise(r => setTimeout(r, 3000));// wait for homing to finish (~2-3 s)
-    await sendGcode(`G1 X${BED_MIN_MM} Y${BED_MIN_MM} F${TRAVEL_FEED}\n`); // move to start corner
+    // Move to center of boundary on startup
+    const initCX = (boundBL.x + boundTR.x) / 2;
+    const initCY = (boundBL.y + boundTR.y) / 2;
+    await sendGcode(`G1 X${initCX.toFixed(2)} Y${initCY.toFixed(2)} F${TRAVEL_FEED}\n`);
 
     printerBtn.classList.add("connected");
     printerLabel.textContent = "Disconnect Printer";
     setStatus("Printer connected", "on");
     printerPanel.style.display = "flex";
-    jogPos = { x: BED_MIN_MM, y: BED_MIN_MM };
+    jogPos = { x: initCX, y: initCY };
     await movePenZ(penUpZ);
     updateBoundsHint();
     if (document.getElementById("plotText").value.trim())
@@ -2555,6 +2551,7 @@ function maybeSendToprinter(canvasX, canvasY) {
   const gy = BED_MIN_MM + (canvasY / H) * (BED_MAX_MM - BED_MIN_MM);
 
   if (!penDown) {
+    // Pen manually lifted — track position only, no drawing
     prevGx = null; prevGy = null;
     sendGcode(`G1 X${gx.toFixed(2)} Y${gy.toFixed(2)} F${TRAVEL_FEED}\n`);
     return;
@@ -2562,38 +2559,39 @@ function maybeSendToprinter(canvasX, canvasY) {
 
   const passes = parseInt(document.getElementById("linePasses")?.value || "1", 10);
 
-  if (passes <= 1 || prevGx === null) {
-    // Single pass or first point — just move
+  if (prevGx === null) {
+    // Start of a new stroke — travel with pen up, then drop once and stay down
+    sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+    sendGcode(`M400\n`);
+    sendGcode(`G1 X${gx.toFixed(2)} Y${gy.toFixed(2)} F${TRAVEL_FEED}\n`);
+    sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
+    sendGcode(`M400\n`);
+    prevGx = gx; prevGy = gy;
+    return;
+  }
+
+  if (passes <= 1) {
     sendGcode(`G1 X${gx.toFixed(2)} Y${gy.toFixed(2)} F${DRAW_FEED}\n`);
     prevGx = gx; prevGy = gy;
     return;
   }
 
-  // Direction vector of this segment
+  // Multi-pass: parallel offset strokes
   const dx = gx - prevGx, dy = gy - prevGy;
   const len = Math.hypot(dx, dy);
   if (len < 0.01) { prevGx = gx; prevGy = gy; return; }
 
-  // Perpendicular unit vector (rotated 90°)
   const px = -dy / len, py = dx / len;
-
-  // Total width to fill = (passes-1) * nib, centred on the line
   const half = ((passes - 1) / 2) * PEN_NIB_MM;
 
-  // Send each parallel pass: alternate direction to avoid travel moves
   for (let i = 0; i < passes; i++) {
     const offset = -half + i * PEN_NIB_MM;
-    const fromX = (prevGx + px * offset);
-    const fromY = (prevGy + py * offset);
-    const toX   = (gx    + px * offset);
-    const toY   = (gy    + py * offset);
-    // Clamp to bed
-    const cfx = Math.max(0, Math.min(220, fromX));
-    const cfy = Math.max(0, Math.min(220, fromY));
-    const ctx2 = Math.max(0, Math.min(220, toX));
-    const cty = Math.max(0, Math.min(220, toY));
+    const cfx  = Math.max(0, Math.min(220, prevGx + px * offset));
+    const cfy  = Math.max(0, Math.min(220, prevGy + py * offset));
+    const ctx2 = Math.max(0, Math.min(220, gx + px * offset));
+    const cty  = Math.max(0, Math.min(220, gy + py * offset));
     if (i > 0) {
-      // Lift-travel to start of this pass, drop, draw
+      // Lift only to reposition for next parallel pass — not a full pen-up
       sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
       sendGcode(`G1 X${cfx.toFixed(2)} Y${cfy.toFixed(2)} F${TRAVEL_FEED}\n`);
       sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
@@ -2739,8 +2737,9 @@ async function plotTextToprinter(text, sizeMM) {
   if (!serialWriter) return;
   const spd = parseFloat(xySpeedEl.value) || 4500;
 
+  // scale: font units (0-8 tall, 0-6 wide) → bed mm
   const scale = sizeMM / CHAR_H;
-  const { strokes, totalWidth: totalMM } = buildTextStrokes(text, scale);
+  const totalMM = text.length * CHAR_W * scale;
 
   const bedW = boundTR.x - boundBL.x;
   const bedH = boundTR.y - boundBL.y;
@@ -2750,27 +2749,39 @@ async function plotTextToprinter(text, sizeMM) {
   else                             originX = boundBL.x + (bedW - totalMM) / 2;
   const originY = boundBL.y + (bedH - sizeMM) / 2;
 
+  const clamp = (v) => Math.max(BED_MIN_MM, Math.min(BED_MAX_MM, v));
+
   // Lift before starting
   await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
   await sendGcode(`M400\n`);
 
-  for (const { offX, scale: sc, pts } of strokes) {
-    // Lift, travel to stroke start, then drop — M400 ensures Z finishes before XY moves
-    await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
-    await sendGcode(`M400\n`);
+  let charOffX = 0;
+  for (const ch of text.toUpperCase()) {
+    const glyphs = HFONT[ch] ?? [];
+    for (const stroke of glyphs) {
+      if (!stroke.length) continue;
 
-    const bedX0 = Math.max(0, Math.min(220, originX + offX + pts[0][0] * sc));
-    const bedY0 = Math.max(0, Math.min(220, originY + (CHAR_H - pts[0][1]) * sc));
-    await sendGcode(`G1 X${bedX0.toFixed(2)} Y${bedY0.toFixed(2)} F${TRAVEL_FEED}\n`);
+      // Lift and travel to stroke start
+      await sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+      await sendGcode(`M400\n`);
 
-    await sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
-    await sendGcode(`M400\n`);
+      const [sx0, sy0] = stroke[0];
+      const bx0 = clamp(originX + charOffX + sx0 * scale);
+      const by0 = clamp(originY + sy0 * scale); // Y=0 bottom, Y=8 top — matches bed Y axis
+      await sendGcode(`G1 X${bx0.toFixed(2)} Y${by0.toFixed(2)} F${TRAVEL_FEED}\n`);
 
-    for (let i = 1; i < pts.length; i++) {
-      const bx = Math.max(0, Math.min(220, originX + offX + pts[i][0] * sc));
-      const by = Math.max(0, Math.min(220, originY + (CHAR_H - pts[i][1]) * sc));
-      await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
+      // Drop and draw
+      await sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
+      await sendGcode(`M400\n`);
+
+      for (let i = 1; i < stroke.length; i++) {
+        const [sx, sy] = stroke[i];
+        const bx = clamp(originX + charOffX + sx * scale);
+        const by = clamp(originY + sy * scale);
+        await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
+      }
     }
+    charOffX += CHAR_W * scale;
   }
 
   // Final lift
