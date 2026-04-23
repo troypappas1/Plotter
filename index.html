@@ -1469,13 +1469,13 @@ function applyBrushSize(sz) {
 }
 
 // ── Toggle pen up / down ──
-// Only affects canvas drawing state — physical Z is controlled by Lift/Drop buttons
-// to avoid the printer bouncing on every gesture flicker
 function togglePen() {
   penDown = !penDown;
   prevX = null; prevY = null;
   resetStrokeBuffer();
   showToast(penDown ? "✏️ Pen down" : "✋ Pen up", penDown ? "drawing" : "lifted");
+  // Also move the physical Z when toggled
+  if (serialWriter) movePenZ(penDown ? penDownZ : penUpZ);
 }
 
 // ── Eye Aspect Ratio for blink detection ──
@@ -1544,6 +1544,13 @@ function processHandGestures(lms) {
     const pinching = isPinching(lms);
     const peace = isPeace(lms);
 
+    // Fist (0 fingers) → ONLY gesture that toggles pen up/down
+    if (fingers === 0) {
+      fireGesture(togglePen);
+      lastHandGesture = "fist";
+      return;
+    }
+
     // Pinch → cycle color
     if (pinching) {
       fireGesture(() => {
@@ -1567,16 +1574,6 @@ function processHandGestures(lms) {
       return;
     }
 
-    // Fist (0 fingers) → decrease brush size
-    if (fingers === 0) {
-      fireGesture(() => {
-        applyBrushSize(brushSize - 4);
-        showToast("✊ Brush", brushSize + "px");
-      });
-      lastHandGesture = "fist";
-      return;
-    }
-
     // Open hand (5 fingers) → increase brush size
     if (fingers === 5) {
       fireGesture(() => {
@@ -1587,19 +1584,12 @@ function processHandGestures(lms) {
       return;
     }
 
-    // Thumbs up (thumb only) → toggle pen up/down
-    if (fingers === 1 && lms[4].y < lms[3].y && lms[8].y > lms[6].y) {
-      fireGesture(togglePen);
-      lastHandGesture = "thumb";
-      return;
-    }
-
     lastHandGesture = "";
   } catch(_) {}
 }
 
 // ── Foot / any-limb dwell detection ──
-// Hold still for DWELL_MS → toggle pen up/down
+// Hold still for DWELL_MS → toggle pen (any-limb mode only)
 function processDwell(cx, cy) {
   if (dwellX === null) {
     dwellX = cx; dwellY = cy; dwellStart = Date.now();
@@ -1611,7 +1601,6 @@ function processDwell(cx, cy) {
     return;
   }
   const held = Date.now() - dwellStart;
-  // Draw a dwell arc on the overlay showing progress
   const frac = Math.min(held / DWELL_MS, 1);
   if (frac > 0.05) {
     octx.beginPath();
@@ -1652,11 +1641,10 @@ const GESTURE_HINTS = {
     { icon: "↔️", desc: "Move head → draw / steer cursor" },
   ],
   hand: [
-    { icon: "✊", desc: "Fist → brush smaller" },
+    { icon: "✊", desc: "Fist → pen up / down (only way to lift pen)" },
     { icon: "🖐", desc: "Open hand → brush larger" },
     { icon: "🤏", desc: "Pinch → cycle color" },
     { icon: "✌️", desc: "Peace sign → clear canvas" },
-    { icon: "👍", desc: "Thumbs up → pen up / down" },
   ],
   any: [
     { icon: "🦶", desc: "Move foot / limb → draw" },
@@ -2799,28 +2787,45 @@ async function plotTextToprinter(text, sizeMM) {
   // so low font Y stays near originY (bottom of text block) → no flip needed.
   const bedY = (sy) => clamp(originY + sy * scale);
 
-  // Send one stroke as a single write so Marlin gets it atomically
+  // Build bed coords for a font point
+  const bx = (sx, charOff) => clamp(originX + charOff + sx * scale);
+  const by = (sy) => clamp(originY + sy * scale);
+
+  // Send one stroke as a single write so Marlin gets it atomically,
+  // then wait long enough for the printer to physically finish it.
   async function sendStroke(pts, charOff) {
-    let buf = `G1 Z${penUpZ.toFixed(2)} F6000\n`;
-    const x0 = clamp(originX + charOff + pts[0][0] * scale);
-    const y0 = bedY(pts[0][1]);
-    buf += `G1 X${x0.toFixed(2)} Y${y0.toFixed(2)} F${TRAVEL_FEED}\n`;
-    buf += `G1 Z${penDownZ.toFixed(2)} F6000\n`;
-    for (let i = 1; i < pts.length; i++) {
-      buf += `G1 X${clamp(originX + charOff + pts[i][0] * scale).toFixed(2)} Y${bedY(pts[i][1]).toFixed(2)} F${spd}\n`;
-    }
-    // Write entire stroke in one call — no queue fragmentation
     if (!serialWriter) return;
+
+    // Calculate total path length in mm to estimate execution time
+    const coords = pts.map(([sx, sy]) => ({ x: bx(sx, charOff), y: by(sy) }));
+    let pathMM = 0;
+    for (let i = 1; i < coords.length; i++) {
+      pathMM += Math.hypot(coords[i].x - coords[i-1].x, coords[i].y - coords[i-1].y);
+    }
+    // Add Z lift (2mm) + travel to start + Z drop
+    const travelDist = Math.hypot(coords[0].x - (lastPlotX ?? coords[0].x), coords[0].y - (lastPlotY ?? coords[0].y));
+    const totalDist = 4 + travelDist + pathMM; // 4mm for two Z hops
+    // Time = dist/speed in ms, add 250ms fixed overhead for acceleration
+    const waitMs = Math.ceil((totalDist / spd) * 60000) + 250;
+
+    let buf = `G1 Z${penUpZ.toFixed(2)} F6000\n`;
+    buf += `G1 X${coords[0].x.toFixed(2)} Y${coords[0].y.toFixed(2)} F${TRAVEL_FEED}\n`;
+    buf += `G1 Z${penDownZ.toFixed(2)} F6000\n`;
+    for (let i = 1; i < coords.length; i++) {
+      buf += `G1 X${coords[i].x.toFixed(2)} Y${coords[i].y.toFixed(2)} F${spd}\n`;
+    }
+
     await serialWriter.write(_enc.encode(buf));
-    // Wait long enough for the printer to physically execute this stroke
-    // at spd mm/min: worst case is CHAR_W*scale mm travel = sizeMM mm
-    const travelMs = Math.ceil((sizeMM / (spd / 60)) * 1000) + 200;
-    await new Promise(r => setTimeout(r, travelMs));
+    lastPlotX = coords[coords.length - 1].x;
+    lastPlotY = coords[coords.length - 1].y;
+    await new Promise(r => setTimeout(r, Math.max(waitMs, 400)));
   }
 
-  // Initial lift
+  let lastPlotX = null, lastPlotY = null;
+
+  // Initial lift and wait for it to complete
   await serialWriter.write(_enc.encode(`G1 Z${penUpZ.toFixed(2)} F6000\n`));
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
 
   let charOffX = 0;
   for (const ch of text.toUpperCase()) {
