@@ -2794,43 +2794,43 @@ async function plotTextToprinter(text, sizeMM) {
   }
 
   const clamp = (v) => Math.max(BED_MIN_MM, Math.min(BED_MAX_MM, v));
+  // bedY: font y=0 is baseline (bottom), y=8 is top of letter.
+  // Bed Y grows away from you (front=0, back=220). We want letters right-side up
+  // so low font Y stays near originY (bottom of text block) → no flip needed.
+  const bedY = (sy) => clamp(originY + sy * scale);
 
-  // Lift and wait for it to physically complete before sending any moves
-  await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
-  await new Promise(r => setTimeout(r, 200));
+  // Send one stroke as a single write so Marlin gets it atomically
+  async function sendStroke(pts, charOff) {
+    let buf = `G1 Z${penUpZ.toFixed(2)} F6000\n`;
+    const x0 = clamp(originX + charOff + pts[0][0] * scale);
+    const y0 = bedY(pts[0][1]);
+    buf += `G1 X${x0.toFixed(2)} Y${y0.toFixed(2)} F${TRAVEL_FEED}\n`;
+    buf += `G1 Z${penDownZ.toFixed(2)} F6000\n`;
+    for (let i = 1; i < pts.length; i++) {
+      buf += `G1 X${clamp(originX + charOff + pts[i][0] * scale).toFixed(2)} Y${bedY(pts[i][1]).toFixed(2)} F${spd}\n`;
+    }
+    // Write entire stroke in one call — no queue fragmentation
+    if (!serialWriter) return;
+    await serialWriter.write(_enc.encode(buf));
+    // Wait long enough for the printer to physically execute this stroke
+    // at spd mm/min: worst case is CHAR_W*scale mm travel = sizeMM mm
+    const travelMs = Math.ceil((sizeMM / (spd / 60)) * 1000) + 200;
+    await new Promise(r => setTimeout(r, travelMs));
+  }
+
+  // Initial lift
+  await serialWriter.write(_enc.encode(`G1 Z${penUpZ.toFixed(2)} F6000\n`));
+  await new Promise(r => setTimeout(r, 300));
 
   let charOffX = 0;
   for (const ch of text.toUpperCase()) {
-    const glyphs = HFONT[ch] ?? [];
-    for (const stroke of glyphs) {
-      if (!stroke.length) continue;
-
-      const [sx0, sy0] = stroke[0];
-      const bx0 = clamp(originX + charOffX + sx0 * scale);
-      // Y axis: font y=0 is bottom of letter, y=8 is top.
-      // On the bed Y grows away from you, so we flip: high font Y → high bed Y
-      const by0 = clamp(originY + (CHAR_H - sy0) * scale);
-
-      // Lift → travel → drop, then wait for all three to fully execute
-      await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
-      await sendGcode(`G1 X${bx0.toFixed(2)} Y${by0.toFixed(2)} F${TRAVEL_FEED}\n`);
-      await sendGcode(`G1 Z${penDownZ.toFixed(2)} F6000\n`);
-      await new Promise(r => setTimeout(r, 150));
-
-      for (let i = 1; i < stroke.length; i++) {
-        const [sx, sy] = stroke[i];
-        const bx = clamp(originX + charOffX + sx * scale);
-        const by = clamp(originY + (CHAR_H - sy) * scale);
-        await sendGcode(`G1 X${bx.toFixed(2)} Y${by.toFixed(2)} F${spd}\n`);
-      }
-
-      // Wait for stroke to finish drawing before next stroke
-      await new Promise(r => setTimeout(r, 150));
+    for (const stroke of (HFONT[ch] ?? [])) {
+      if (stroke.length) await sendStroke(stroke, charOffX);
     }
     charOffX += CHAR_W * scale;
   }
 
-  await sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
+  await serialWriter.write(_enc.encode(`G1 Z${penUpZ.toFixed(2)} F6000\n`));
 }
 
 // ── Text panel wiring ──
