@@ -2457,12 +2457,10 @@ printerBtn.addEventListener("click", async () => {
     await sendGcode("G21\n");                  // units: millimetres
     await sendGcode("G90\n");                  // absolute positioning
     await sendGcode("M84 S0\n");               // disable stepper timeout (keep motors on)
-    await sendGcode("G28 X Y\n");              // home X and Y (Z not needed — pen is fixed height)
-    await new Promise(r => setTimeout(r, 3000));// wait for homing to finish (~2-3 s)
-    // Move to center of boundary on startup
+    // Go straight to center at full speed — no homing needed since pen height is fixed
     const initCX = (boundBL.x + boundTR.x) / 2;
     const initCY = (boundBL.y + boundTR.y) / 2;
-    await sendGcode(`G1 X${initCX.toFixed(2)} Y${initCY.toFixed(2)} F${TRAVEL_FEED}\n`);
+    await sendGcode(`G1 X${initCX.toFixed(2)} Y${initCY.toFixed(2)} F12000\n`);
 
     printerBtn.classList.add("connected");
     printerLabel.textContent = "Disconnect Printer";
