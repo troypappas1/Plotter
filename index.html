@@ -946,7 +946,7 @@ footer { border-top: 1px solid var(--border); padding: 2.75rem 0 1.25rem; }
               <button class="pp-btn pp-btn-sm z-step-btn" id="zStepUp">+</button>
               <div class="z-slider-inner">
                 <span class="z-tick">50</span>
-                <input type="range" id="zLiveSlider" class="z-slider" min="-50" max="50" step="0.5" value="-45">
+                <input type="range" id="zLiveSlider" class="z-slider" min="-50" max="50" step="0.5" value="-48">
                 <span class="z-tick">-50</span>
               </div>
               <button class="pp-btn pp-btn-sm z-step-btn" id="zStepDown">−</button>
@@ -954,11 +954,11 @@ footer { border-top: 1px solid var(--border); padding: 2.75rem 0 1.25rem; }
             <div class="pp-2col">
               <div class="pp-field">
                 <label class="pp-label">Pen Up (mm)</label>
-                <input type="number" id="penUpZ" class="pp-num" value="-45" min="-50" max="50" step="0.5">
+                <input type="number" id="penUpZ" class="pp-num" value="-48" min="-50" max="50" step="0.5">
               </div>
               <div class="pp-field">
                 <label class="pp-label">Pen Down (mm)</label>
-                <input type="number" id="penDownZ" class="pp-num" value="-48" min="-50" max="50" step="0.5">
+                <input type="number" id="penDownZ" class="pp-num" value="-50" min="-50" max="50" step="0.5">
               </div>
             </div>
           </div>
@@ -2018,8 +2018,8 @@ function brightPt() {
 }
 
 // ── Printer panel state ──
-let penUpZ    = -45;
-let penDownZ  = -48;
+let penUpZ    = -48;
+let penDownZ  = -50;
 let currentZ  = null;
 let turboMode = false;
 let boundBL   = { x: 0,   y: 0   };
@@ -2558,23 +2558,24 @@ function maybeSendToprinter(canvasX, canvasY) {
   const passes = parseInt(document.getElementById("linePasses")?.value || "1", 10);
 
   if (prevGx === null) {
-    // Start of a new stroke — travel with pen up, then drop once and stay down
-    sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
-    sendGcode(`M400\n`);
+    // New stroke — lift just 2mm, travel, drop back down, no M400 to avoid stutter
+    sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
     sendGcode(`G1 X${gx.toFixed(2)} Y${gy.toFixed(2)} F${TRAVEL_FEED}\n`);
-    sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
-    sendGcode(`M400\n`);
+    sendGcode(`G1 Z${penDownZ.toFixed(2)} F6000\n`);
     prevGx = gx; prevGy = gy;
     return;
   }
 
+  const passes = parseInt(document.getElementById("linePasses")?.value || "1", 10);
+
   if (passes <= 1) {
+    // Pen stays at -50 — just draw
     sendGcode(`G1 X${gx.toFixed(2)} Y${gy.toFixed(2)} F${DRAW_FEED}\n`);
     prevGx = gx; prevGy = gy;
     return;
   }
 
-  // Multi-pass: parallel offset strokes
+  // Multi-pass: parallel offset strokes — small lift between passes only
   const dx = gx - prevGx, dy = gy - prevGy;
   const len = Math.hypot(dx, dy);
   if (len < 0.01) { prevGx = gx; prevGy = gy; return; }
@@ -2589,10 +2590,9 @@ function maybeSendToprinter(canvasX, canvasY) {
     const ctx2 = Math.max(0, Math.min(220, gx + px * offset));
     const cty  = Math.max(0, Math.min(220, gy + py * offset));
     if (i > 0) {
-      // Lift only to reposition for next parallel pass — not a full pen-up
-      sendGcode(`G1 Z${penUpZ.toFixed(2)} F3000\n`);
+      sendGcode(`G1 Z${penUpZ.toFixed(2)} F6000\n`);
       sendGcode(`G1 X${cfx.toFixed(2)} Y${cfy.toFixed(2)} F${TRAVEL_FEED}\n`);
-      sendGcode(`G1 Z${penDownZ.toFixed(2)} F3000\n`);
+      sendGcode(`G1 Z${penDownZ.toFixed(2)} F6000\n`);
     }
     sendGcode(`G1 X${ctx2.toFixed(2)} Y${cty.toFixed(2)} F${DRAW_FEED}\n`);
   }
